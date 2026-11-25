@@ -1,0 +1,35 @@
+# Copy to .github/workflows/samiksha.yml in the target repo.
+name: Samiksha review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write # only needed when comment: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Shadow mode: advisory, no gate. Leave fail-on-verdict empty.
+      - uses: ShrikantJadhav/samiksha-action@v1
+        id: samiksha
+        with:
+          base: origin/${{ github.event.pull_request.base.ref }}
+          model: gpt-4o-mini
+          intent: ${{ github.event.pull_request.title }}
+          comment: "true"
+          # fail-on-verdict: UNSOUND # enable only after the signal is trusted
+        env:
+          SAMIKSHA_API_KEY: ${{ secrets.SAMIKSHA_API_KEY }}
+
+      - name: Report
+        if: always()
+        run: |
+          echo "verdict=${{ steps.samiksha.outputs.verdict }}"
+          echo "failed=${{ steps.samiksha.outputs.failed }}"

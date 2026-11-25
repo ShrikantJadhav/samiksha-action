@@ -1,0 +1,120 @@
+name: Samiksha Evidence Review
+description: Evidence-backed agentic review for code changes, with Blast as a deterministic floor.
+author: Shrikant Jadhav
+branding:
+  icon: eye
+  color: purple
+
+inputs:
+  base:
+    description: "Git ref to diff against. Use origin/<base-branch> with fetch-depth: 0."
+    required: false
+    default: origin/main
+  model:
+    description: Model id. Falls back to SAMIKSHA_MODEL or OPENAI_MODEL.
+    required: false
+    default: ""
+  base-url:
+    description: OpenAI-compatible chat-completions base URL. Falls back to SAMIKSHA_BASE_URL or OPENAI_BASE_URL.
+    required: false
+    default: ""
+  api-key:
+    description: API key. Falls back to SAMIKSHA_API_KEY or OPENAI_API_KEY.
+    required: false
+    default: ""
+  intent:
+    description: What the change claims to do. Defaults to the pull request title.
+    required: false
+    default: ""
+  fail-on-verdict:
+    description: Fail the job at this verdict or worse (SOUND, CONCERNS, UNSOUND). Leave empty for advisory mode.
+    required: false
+    default: ""
+  comment:
+    description: "Post the full review as a PR comment. Needs pull-requests: write permission."
+    required: false
+    default: "false"
+  token:
+    description: GitHub token used for PR comments.
+    required: false
+    default: ${{ github.token }}
+  allow-run:
+    description: Allow the reviewer to execute shell commands. Off by default.
+    required: false
+    default: "false"
+  pass-steps:
+    description: Maximum tool rounds per specialist pass.
+    required: false
+    default: "3"
+  single-agent:
+    description: Use the original single-loop reviewer instead of specialist passes (for A/B).
+    required: false
+    default: "false"
+  show-passes:
+    description: Print each specialist report to stderr for debugging.
+    required: false
+    default: "false"
+  version:
+    description: Go version query for the Samiksha CLI, e.g. latest, v0.1.0, or a commit SHA.
+    required: false
+    default: latest
+  blast-version:
+    description: Go version query for the Blast CLI used as the deterministic floor.
+    required: false
+    default: latest
+
+outputs:
+  verdict:
+    description: SOUND, CONCERNS, UNSOUND, NO_CHANGES, or UNKNOWN.
+    value: ${{ steps.review.outputs.verdict }}
+  review-path:
+    description: Path to the raw Markdown review on the runner.
+    value: ${{ steps.review.outputs.review_path }}
+  failed:
+    description: "true when the verdict met fail-on-verdict, otherwise false."
+    value: ${{ steps.review.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.23"
+        cache: false
+
+    - name: Install Samiksha and Blast
+      shell: bash
+      env:
+        SAMIKSHA_VERSION: ${{ inputs.version }}
+        BLAST_VERSION: ${{ inputs.blast-version }}
+      run: |
+        set -euo pipefail
+        export GOBIN="$RUNNER_TEMP/samiksha-bin"
+        mkdir -p "$GOBIN"
+        go install "github.com/ShrikantJadhav/blast/cmd/blast@${BLAST_VERSION}"
+        go install "github.com/ShrikantJadhav/samiksha/cmd/samiksha@${SAMIKSHA_VERSION}"
+        echo "$GOBIN" >> "$GITHUB_PATH"
+
+    - name: Review diff
+      id: review
+      shell: bash
+      timeout-minutes: 20
+      env:
+        BASE: ${{ inputs.base }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_INTENT: ${{ inputs.intent }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        FAIL_ON: ${{ inputs.fail-on-verdict }}
+        DO_COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.token }}
+        ALLOW_RUN: ${{ inputs.allow-run }}
+        PASS_STEPS: ${{ inputs.pass-steps }}
+        SINGLE_AGENT: ${{ inputs.single-agent }}
+        SHOW_PASSES: ${{ inputs.show-passes }}
+        BLAST_BIN: ${{ runner.temp }}/samiksha-bin/blast
+      run: bash "$GITHUB_ACTION_PATH/scripts/review.sh"
